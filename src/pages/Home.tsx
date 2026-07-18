@@ -5,40 +5,57 @@ import {
   SHUTTER_SPEEDS,
   APERTURES,
   ISO_VALUES,
-  EV_THIRDS,
 } from "@/hooks/use-light-meter";
 import { DialWheel } from "@/components/DialWheel";
 import { CameraMenu } from "@/components/CameraMenu";
 
 // ── Scene icon from measured EV ──────────────────────────────────────────────
 function getScene(ev: number): { Icon: React.ElementType; label: string } {
-  if (ev >= 14) return { Icon: Sun,      label: "Bright Sun"  };
-  if (ev >= 12) return { Icon: CloudSun, label: "Hazy Sun"    };
-  if (ev >= 10) return { Icon: Cloud,    label: "Overcast"    };
-  if (ev >= 8)  return { Icon: Cloudy,   label: "Heavy Cloud" };
-  if (ev >= 5)  return { Icon: Sunset,   label: "Dusk / Dawn" };
-  if (ev >= 2)  return { Icon: Moon,     label: "Night"       };
-  return             { Icon: MoonStar,  label: "Deep Night"  };
-}
-
-// ── EV label ─────────────────────────────────────────────────────────────────
-function evLabel(v: number): string {
-  if (v === 0)  return "0";
-  if (v === 1)  return "+1";
-  if (v === -1) return "−1";
-  return v > 0 ? `+${v}` : `${v}`;
+  if (ev >= 14) return { Icon: Sun, label: "Bright Sun" };
+  if (ev >= 12) return { Icon: CloudSun, label: "Hazy Sun" };
+  if (ev >= 10) return { Icon: Cloud, label: "Overcast" };
+  if (ev >= 8) return { Icon: Cloudy, label: "Heavy Cloud" };
+  if (ev >= 5) return { Icon: Sunset, label: "Dusk / Dawn" };
+  if (ev >= 2) return { Icon: Moon, label: "Night" };
+  return { Icon: MoonStar, label: "Deep Night" };
 }
 
 // All long exposures ≥ 1s (including Bulb) styled green
 function ssItemStyle(val: string): { color?: string; opacity?: number } | undefined {
-  if (["1s","2s","4s","8s","15s","30s","60s","B"].includes(val)) return { color: "#33ff99" };
+  if (["1s", "2s", "4s", "8s", "15s", "30s", "60s", "B"].includes(val)) return { color: "#33ff99" };
   return undefined;
 }
 
-// EV strip range: −1 … +1
-const STRIP_MIN   = -1;
-const STRIP_MAX   =  1;
-const STRIP_RANGE = STRIP_MAX - STRIP_MIN; // 2
+// ── Red dot divider between dials ────────────────────────────────────────────
+function DialDivider() {
+  return (
+    <div
+      style={{
+        height: 8,
+        background: "rgba(255,255,255,0.05)",
+        flexShrink: 0,
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      {/* Red dot at center */}
+      <div
+        style={{
+          marginLeft: "-8px",
+          marginTop: "20px",
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: "#E03030",
+          boxShadow: "0 0 8px rgba(94, 93, 93, 0.8)",
+          flexShrink: 0,
+        }}
+      />
+    </div>
+  );
+}
 
 export default function Home() {
   const {
@@ -48,7 +65,7 @@ export default function Home() {
     isoIndex, setIsoIndex,
     apertureIndex, handleApertureChange,
     ssIndex, handleSsChange,
-    measuredEV, evComp, setEvComp,
+    measuredEV,
     spotPoint, setSpotPoint,
     isActive, error, startCamera,
     selectedCamera, selectCamera,
@@ -59,8 +76,8 @@ export default function Home() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   // ── Spot meter tap ───────────────────────────────────────────────────────
-  const cameraRef        = useRef<HTMLDivElement>(null);
-  const pointerDownPos   = useRef<{ x: number; y: number } | null>(null);
+  const cameraRef = useRef<HTMLDivElement>(null);
+  const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
 
   const onCameraPointerDown = useCallback((e: React.PointerEvent) => {
     pointerDownPos.current = { x: e.clientX, y: e.clientY };
@@ -72,48 +89,14 @@ export default function Home() {
     if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) return;
     if (!cameraRef.current) return;
     const rect = cameraRef.current.getBoundingClientRect();
-    if (e.clientX > rect.right - 44) return; // EV strip zone
     const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top)  / rect.height;
+    const y = (e.clientY - rect.top) / rect.height;
     if (spotPoint && Math.abs(spotPoint.x - x) < 0.08 && Math.abs(spotPoint.y - y) < 0.08) {
       setSpotPoint(null);
     } else {
       setSpotPoint({ x, y });
     }
   }, [spotPoint, setSpotPoint]);
-
-  // ── EV compensation strip — right side ──────────────────────────────────
-  const evStripRef  = useRef<HTMLDivElement>(null);
-  const evDragging  = useRef(false);
-  const evStartY    = useRef(0);
-  const evStartComp = useRef(0);
-
-  const onEvDown = useCallback((e: React.PointerEvent) => {
-    evDragging.current  = true;
-    evStartY.current    = e.clientY;
-    evStartComp.current = evComp;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    e.stopPropagation();
-  }, [evComp]);
-
-  const onEvMove = useCallback((e: React.PointerEvent) => {
-    if (!evDragging.current || !evStripRef.current) return;
-    const dy    = e.clientY - evStartY.current;
-    const h     = evStripRef.current.offsetHeight;
-    // drag DOWN → more positive EV (strip: top=STRIP_MIN, bottom=STRIP_MAX)
-    const delta = (dy / h) * STRIP_RANGE;
-    const raw   = Math.max(STRIP_MIN, Math.min(STRIP_MAX, evStartComp.current + delta));
-    const snap  = (EV_THIRDS as readonly number[]).reduce((p, c) =>
-      Math.abs(c - raw) < Math.abs(p - raw) ? c : p
-    );
-    setEvComp(snap);
-    e.stopPropagation();
-  }, [setEvComp]);
-
-  const onEvUp = useCallback((e: React.PointerEvent) => {
-    evDragging.current = false;
-    e.stopPropagation();
-  }, []);
 
   // ── Live pulse ───────────────────────────────────────────────────────────
   const [pulse, setPulse] = useState(false);
@@ -125,15 +108,10 @@ export default function Home() {
 
   // ── Derived ──────────────────────────────────────────────────────────────
   const { Icon: SceneIcon, label: sceneLabel } = getScene(measuredEV);
-  const brightnessFactor = Math.pow(2, evComp);
 
-  const ssLabels  = SHUTTER_SPEEDS.map(s => s.label);
+  const ssLabels = SHUTTER_SPEEDS.map(s => s.label);
   const aptLabels = APERTURES.map(a => a.label);
   const isoLabels = ISO_VALUES.map(i => i.label);
-
-  // EV strip: top=STRIP_MIN, bottom=STRIP_MAX
-  // position 0=top 1=bottom
-  const evPosFromTop = (ev: number) => (ev - STRIP_MIN) / STRIP_RANGE;
 
   return (
     <div
@@ -151,7 +129,7 @@ export default function Home() {
         onPointerDown={onCameraPointerDown}
         onPointerUp={onCameraTap}
       >
-        {/* Live video */}
+        {/* Live video — 2× zoom (equivalent to ~50mm on a phone) */}
         <video
           ref={videoRef}
           playsInline
@@ -159,8 +137,8 @@ export default function Home() {
           className="absolute inset-0 w-full h-full"
           style={{
             objectFit: "cover",
-            filter: `brightness(${brightnessFactor.toFixed(3)})`,
-            transition: "filter 0.4s ease",
+            transform: "scale(2)",
+            transformOrigin: "center center",
           }}
           data-testid="video-camera"
         />
@@ -206,7 +184,7 @@ export default function Home() {
             className="absolute pointer-events-none"
             style={{
               left: `${spotPoint.x * 100}%`,
-              top:  `${spotPoint.y * 100}%`,
+              top: `${spotPoint.y * 100}%`,
               transform: "translate(-50%, -50%)",
             }}
           >
@@ -216,12 +194,11 @@ export default function Home() {
                 border: "1.5px solid rgba(255,255,255,0.85)",
                 boxShadow: "0 0 0 1px rgba(0,0,0,0.5)",
               }} />
-              {/* Crosshair */}
               {([
-                { top: 0,    left: "50%", w: 1, h: 8,  tx: "-50%", ty: "0"    },
-                { bottom: 0, left: "50%", w: 1, h: 8,  tx: "-50%", ty: "0"    },
-                { left: 0,   top:  "50%", w: 8, h: 1,  tx: "0",    ty: "-50%" },
-                { right: 0,  top:  "50%", w: 8, h: 1,  tx: "0",    ty: "-50%" },
+                { top: 0, left: "50%", w: 1, h: 8, tx: "-50%", ty: "0" },
+                { bottom: 0, left: "50%", w: 1, h: 8, tx: "-50%", ty: "0" },
+                { left: 0, top: "50%", w: 8, h: 1, tx: "0", ty: "-50%" },
+                { right: 0, top: "50%", w: 8, h: 1, tx: "0", ty: "-50%" },
               ] as const).map((s, i) => (
                 <div key={i} style={{
                   position: "absolute",
@@ -240,27 +217,11 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── Top bar: scene icon (fixed left) + hamburger (fixed right) ── */}
-        <div className="absolute top-0 left-0 right-0 flex items-start justify-between px-3 pt-10 pointer-events-none">
-          {/* Scene icon — fixed width so it never shifts */}
-          <div
-            className="flex flex-col items-center gap-0.5 pointer-events-none"
-            style={{ width: 72, minWidth: 72 }}
-          >
-            {isActive && measuredEV > 0 && (
-              <>
-                <SceneIcon size={28} color="rgba(255,255,255,0.85)" />
-                <span
-                  className="text-[8px] font-mono uppercase tracking-widest text-center w-full"
-                  style={{ color: "rgba(255,255,255,0.4)" }}
-                >
-                  {sceneLabel}
-                </span>
-              </>
-            )}
-          </div>
-
-          {/* Hamburger — larger, square */}
+        {/* ── Hamburger — top-right, below notch ── */}
+        <div
+          className="absolute right-0 top-0 px-3 pointer-events-none"
+          style={{ paddingTop: "max(env(safe-area-inset-top, 12px) + 8px, 15px)" }}
+        >
           <button
             className="pointer-events-auto flex items-center justify-center active:opacity-60 transition-opacity"
             style={{
@@ -279,7 +240,22 @@ export default function Home() {
           </button>
         </div>
 
-        {/* ── Status strip at bottom of camera ── */}
+        {/* ── Scene / Weather icon — bottom-right of camera ── */}
+        {isActive && measuredEV > 0 && (
+          <div
+            className="absolute bottom-0 right-0 flex flex-col items-center gap-1 pointer-events-none px-3 pb-3 sunny_16"
+          >
+            <SceneIcon size={26} color="rgba(255,255,255,0.8)" />
+            <span
+              className="text-[8px] font-mono uppercase tracking-widest text-center"
+              style={{ color: "rgba(255,255,255,0.45)" }}
+            >
+              {sceneLabel}
+            </span>
+          </div>
+        )}
+
+        {/* ── Status strip at bottom-left of camera ── */}
         <div className="absolute bottom-2 left-3 flex items-center gap-2 pointer-events-none">
           {isActive && (
             <span
@@ -291,118 +267,37 @@ export default function Home() {
             {selectedCamera ? selectedCamera.name : mode === "A" ? "Aperture priority" : "Shutter priority"}
           </span>
         </div>
-
-        {/* ── EV compensation strip — right side, below hamburger ── */}
-        <div
-          ref={evStripRef}
-          className="absolute right-0 bottom-0"
-          style={{
-            top: 120,   // clear the hamburger button area
-            width: 42,
-            touchAction: "none",
-            cursor: "ns-resize",
-            zIndex: 10,
-          }}
-          onPointerDown={onEvDown}
-          onPointerMove={onEvMove}
-          onPointerUp={onEvUp}
-          onPointerCancel={onEvUp}
-        >
-          {/* Background */}
-          <div
-            className="absolute inset-0"
-            style={{ background: "linear-gradient(to right, transparent, rgba(0,0,0,0.55))" }}
-          />
-
-          {/* Three stop marks: −1, 0, +1 */}
-          <div className="absolute inset-0 flex flex-col justify-between py-5 items-end">
-            {(EV_THIRDS as readonly number[]).map((step, idx) => {
-              const active = Math.abs(step - evComp) < 0.01;
-              return (
-                <div key={idx} className="flex items-center justify-end w-full pr-2 gap-1.5">
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontFamily: "'Space Mono',monospace",
-                      fontWeight: 700,
-                      color: active ? "#fff" : "rgba(255,255,255,0.28)",
-                      transition: "color 0.15s",
-                      lineHeight: 1,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {evLabel(step)}
-                  </span>
-                  <div
-                    style={{
-                      width:  active ? 22 : 13,
-                      height: active ? 2  : 1,
-                      background: active ? "#fff" : "rgba(255,255,255,0.35)",
-                      transition: "all 0.15s",
-                      borderRadius: 1,
-                      flexShrink: 0,
-                    }}
-                  />
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Floating readout for non-zero compensation */}
-          {evComp !== 0 && (
-            <div
-              className="absolute font-mono font-bold"
-              style={{
-                top: `${evPosFromTop(evComp) * 100}%`,
-                right: 0,
-                transform: "translateY(-50%)",
-                fontSize: 9,
-                color: evComp > 0 ? "#fff" : "#bbb",
-                padding: "1px 3px",
-                background: "rgba(0,0,0,0.65)",
-                borderRadius: 2,
-                lineHeight: 1.4,
-                whiteSpace: "nowrap",
-                transition: "top 0.08s ease",
-                pointerEvents: "none",
-              }}
-            >
-              {evLabel(evComp)}
-            </div>
-          )}
-        </div>
       </div>
-
-      {/* ── Divider ──────────────────────────────────────────────── */}
-      <div style={{ height: 1, background: "rgba(255,255,255,0.06)", flexShrink: 0 }} />
 
       {/* ── Dials ────────────────────────────────────────────────── */}
       <div style={{ flexShrink: 0, background: "#000" }}>
-        <div style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-          <DialWheel
-            label="Shutter Speed"
-            values={ssLabels}
-            activeIndex={ssIndex}
-            onChange={handleSsChange}
-            isAuto={mode === "A" || autoOverride === "SS"}
-            minIndex={camSsMin}
-            maxIndex={camSsMax}
-            getItemStyle={ssItemStyle}
-            data-testid="dial-ss"
-          />
-        </div>
-        <div style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-          <DialWheel
-            label="Aperture"
-            values={aptLabels}
-            activeIndex={apertureIndex}
-            onChange={handleApertureChange}
-            isAuto={mode === "S" || autoOverride === "APT"}
-            minIndex={camAptMin}
-            maxIndex={camAptMax}
-            data-testid="dial-aperture"
-          />
-        </div>
+        <DialWheel
+          label="Shutter Speed"
+          values={ssLabels}
+          activeIndex={ssIndex}
+          onChange={handleSsChange}
+          isAuto={mode === "A" || autoOverride === "SS"}
+          minIndex={camSsMin}
+          maxIndex={camSsMax}
+          getItemStyle={ssItemStyle}
+          data-testid="dial-ss"
+        />
+
+        <DialDivider />
+
+        <DialWheel
+          label="Aperture"
+          values={aptLabels}
+          activeIndex={apertureIndex}
+          onChange={handleApertureChange}
+          isAuto={mode === "S" || autoOverride === "APT"}
+          minIndex={camAptMin}
+          maxIndex={camAptMax}
+          data-testid="dial-aperture"
+        />
+
+        <DialDivider />
+
         <DialWheel
           label="ISO"
           values={isoLabels}

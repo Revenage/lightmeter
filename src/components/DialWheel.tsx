@@ -1,7 +1,35 @@
 import { useRef, useEffect, useCallback } from "react";
 
-const ITEM_WIDTH  = 64;
+const ITEM_WIDTH = 64;
 const DIAL_HEIGHT = 78;
+
+// ── Tiny click sound via Web Audio API ──────────────────────────────────────
+function playClick() {
+  try {
+    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(900, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.025);
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.04);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.05);
+    osc.onended = () => ctx.close();
+  } catch {
+    // AudioContext unavailable
+  }
+}
+
+// ── Gentle haptic via Vibration API ─────────────────────────────────────────
+function vibrateTick() {
+  if ("vibrate" in navigator) {
+    navigator.vibrate(6); // 6ms — barely perceptible
+  }
+}
 
 interface DialWheelProps {
   values: string[];
@@ -15,6 +43,9 @@ interface DialWheelProps {
   "data-testid"?: string;
 }
 
+// Number of tick marks to render across the dial width
+const TICK_COUNT = 52;
+
 export function DialWheel({
   values,
   activeIndex,
@@ -26,11 +57,12 @@ export function DialWheel({
   getItemStyle,
   "data-testid": testId,
 }: DialWheelProps) {
-  const hi          = maxIndex ?? values.length - 1;
-  const stripRef    = useRef<HTMLDivElement>(null);
-  const isDragging  = useRef(false);
-  const startX      = useRef(0);
-  const startIndex  = useRef(activeIndex);
+  const hi = maxIndex ?? values.length - 1;
+  const stripRef = useRef<HTMLDivElement>(null);
+  const ticksRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
+  const startX = useRef(0);
+  const startIndex = useRef(activeIndex);
   const lastReported = useRef(activeIndex);
 
   const applyTransform = useCallback((tx: number, animated: boolean) => {
@@ -41,35 +73,54 @@ export function DialWheel({
     stripRef.current.style.transform = `translateX(${tx}px)`;
   }, []);
 
+  // Scroll the tick strip together with the value strip
+  const applyTickScroll = useCallback((tx: number, animated: boolean) => {
+    if (!ticksRef.current) return;
+    ticksRef.current.style.transition = animated
+      ? "transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94)"
+      : "none";
+    // Tick spacing = ITEM_WIDTH / 4 (4 ticks per value slot)
+    ticksRef.current.style.transform = `translateX(${tx % ITEM_WIDTH}px)`;
+  }, []);
+
   useEffect(() => {
-    if (!isDragging.current) applyTransform(-(activeIndex * ITEM_WIDTH), true);
-  }, [activeIndex, applyTransform]);
+    if (!isDragging.current) {
+      applyTransform(-(activeIndex * ITEM_WIDTH), true);
+      applyTickScroll(-(activeIndex * ITEM_WIDTH), true);
+    }
+  }, [activeIndex, applyTransform, applyTickScroll]);
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    isDragging.current   = true;
-    startX.current       = e.clientX;
-    startIndex.current   = activeIndex;
+    isDragging.current = true;
+    startX.current = e.clientX;
+    startIndex.current = activeIndex;
     lastReported.current = activeIndex;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     applyTransform(-(activeIndex * ITEM_WIDTH), false);
-  }, [activeIndex, applyTransform]);
+    applyTickScroll(-(activeIndex * ITEM_WIDTH), false);
+  }, [activeIndex, applyTransform, applyTickScroll]);
 
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDragging.current) return;
-    const dx      = e.clientX - startX.current;
-    applyTransform(-(startIndex.current * ITEM_WIDTH) + dx, false);
-    const raw     = startIndex.current + Math.round(-dx / ITEM_WIDTH);
+    const dx = e.clientX - startX.current;
+    const totalTx = -(startIndex.current * ITEM_WIDTH) + dx;
+    applyTransform(totalTx, false);
+    applyTickScroll(totalTx, false);
+    const raw = startIndex.current + Math.round(-dx / ITEM_WIDTH);
     const clamped = Math.max(minIndex, Math.min(hi, raw));
     if (clamped !== lastReported.current) {
       lastReported.current = clamped;
       onChange(clamped);
+      playClick();
+      vibrateTick();
     }
-  }, [applyTransform, onChange, minIndex, hi]);
+  }, [applyTransform, applyTickScroll, onChange, minIndex, hi]);
 
   const onPointerUp = useCallback(() => {
     isDragging.current = false;
     applyTransform(-(lastReported.current * ITEM_WIDTH), true);
-  }, [applyTransform]);
+    applyTickScroll(-(lastReported.current * ITEM_WIDTH), true);
+  }, [applyTransform, applyTickScroll]);
 
   return (
     <div className="flex flex-col select-none" data-testid={testId}>
@@ -104,6 +155,62 @@ export function DialWheel({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       >
+        {/* ── Analog dial tick marks — scrolling with the dial ── */}
+        <div
+          ref={ticksRef}
+          className="absolute inset-0 pointer-events-none z-5"
+          style={{ willChange: "transform" }}
+        >
+          {Array.from({ length: TICK_COUNT }).map((_, i) => {
+            // Every 4th tick is a "major" tick (aligns with a value)
+            const isMajor = i % 4 === 0;
+            const isHalf = i % 2 === 0 && !isMajor;
+            const tickH = isMajor ? 14 : isHalf ? 9 : 6;
+            const tickW = isMajor ? 1.5 : 1;
+            const opacity = isMajor ? 0.35 : isHalf ? 0.2 : 0.12;
+            const tickSpacing = ITEM_WIDTH / 4; // 4 ticks per value slot = 16px apart
+
+            return (
+              <div
+                key={i}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: i * tickSpacing,
+                  width: tickW,
+                  height: tickH,
+                  background: `rgba(255,255,255,${opacity})`,
+                  borderRadius: 1,
+                }}
+              />
+            );
+          })}
+          {/* Bottom edge ticks (mirror) */}
+          {Array.from({ length: TICK_COUNT }).map((_, i) => {
+            const isMajor = i % 4 === 0;
+            const isHalf = i % 2 === 0 && !isMajor;
+            const tickH = isMajor ? 14 : isHalf ? 9 : 6;
+            const tickW = isMajor ? 1.5 : 1;
+            const opacity = isMajor ? 0.35 : isHalf ? 0.2 : 0.12;
+            const tickSpacing = ITEM_WIDTH / 4;
+
+            return (
+              <div
+                key={`b${i}`}
+                style={{
+                  position: "absolute",
+                  bottom: 0,
+                  left: i * tickSpacing,
+                  width: tickW,
+                  height: tickH,
+                  background: `rgba(255,255,255,${opacity})`,
+                  borderRadius: 1,
+                }}
+              />
+            );
+          })}
+        </div>
+
         {/* Diamond knurling texture (two diagonal gradients = crosshatch) */}
         <div
           className="absolute inset-0 pointer-events-none z-10"
@@ -141,21 +248,6 @@ export function DialWheel({
           }}
         />
 
-        {/* Reference marker — orange triangle at top, pointing down into the active slot */}
-        <div
-          className="absolute pointer-events-none z-40"
-          style={{
-            top: 0,
-            left: "50%",
-            transform: "translateX(-50%)",
-            width: 0,
-            height: 0,
-            borderLeft: "5px solid transparent",
-            borderRight: "5px solid transparent",
-            borderTop: "7px solid #E07820",
-          }}
-        />
-
         {/* Subtle center guide line */}
         <div
           className="absolute inset-y-0 pointer-events-none z-10"
@@ -163,7 +255,7 @@ export function DialWheel({
             left: "50%",
             width: 1,
             transform: "translateX(-50%)",
-            background: "rgba(224,120,32,0.12)",
+            background: "rgba(255,255,255,0.04)",
           }}
         />
 
@@ -171,29 +263,29 @@ export function DialWheel({
         <div
           ref={stripRef}
           className="absolute top-0 h-full flex items-center will-change-transform"
-          style={{ left: `calc(50% - ${ITEM_WIDTH / 2}px)` }}
+          style={{ left: `calc(50% - ${ITEM_WIDTH / 2}px)`, zIndex: 30 }}
         >
           {values.map((val, i) => {
-            const dist       = Math.abs(i - activeIndex);
+            const dist = Math.abs(i - activeIndex);
             const outOfRange = i < minIndex || i > hi;
-            const custom     = getItemStyle?.(val, i);
+            const custom = getItemStyle?.(val, i);
 
             const baseOpacity = outOfRange
               ? 0.1
               : dist === 0 ? 1
-              : dist === 1 ? 0.5
-              : dist === 2 ? 0.24
-              : dist === 3 ? 0.1
-              : 0;
-            const opacity  = custom?.opacity ?? baseOpacity;
+                : dist === 1 ? 0.5
+                  : dist === 2 ? 0.24
+                    : dist === 3 ? 0.1
+                      : 0;
+            const opacity = custom?.opacity ?? baseOpacity;
             const fontSize = dist === 0 ? 19 : dist === 1 ? 15 : dist === 2 ? 13 : 11;
 
             // Engraved look for non-active items; active item is pure white
             const baseColor = dist === 0 && !outOfRange
               ? "#FFFFFF"
               : outOfRange
-              ? "rgba(255,255,255,0.2)"
-              : "rgba(255,255,255,0.75)";
+                ? "rgba(255,255,255,0.2)"
+                : "rgba(255,255,255,0.75)";
             const color = custom?.color ?? baseColor;
 
             return (

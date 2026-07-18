@@ -21,9 +21,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
       manifest: {
-        name: 'Lightmeter',
-        short_name: 'Lightmeter',
-        description: 'A precision light meter for film photographers',
+        name: 'Expo16',
+        short_name: 'Expo16',
+        description: 'Precision light meter for film photographers',
         theme_color: '#000000',
         background_color: '#000000',
         display: 'standalone',

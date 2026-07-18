@@ -7,23 +7,23 @@ export const SHUTTER_SPEEDS = [
   { label: "4000", val: 1 / 4000 },
   { label: "2000", val: 1 / 2000 },
   { label: "1000", val: 1 / 1000 },
-  { label: "500",  val: 1 / 500  },
-  { label: "250",  val: 1 / 250  },
-  { label: "125",  val: 1 / 125  },
-  { label: "60",   val: 1 / 60   },
-  { label: "30",   val: 1 / 30   },
-  { label: "15",   val: 1 / 15   },
-  { label: "8",    val: 1 / 8    },
-  { label: "4",    val: 1 / 4    },
-  { label: "2",    val: 1 / 2    },
-  { label: "1s",   val: 1        },
-  { label: "2s",   val: 2        },
-  { label: "4s",   val: 4        },
-  { label: "8s",   val: 8        },
-  { label: "15s",  val: 15       },
-  { label: "30s",  val: 30       },
-  { label: "60s",  val: 60       },
-  { label: "B",    val: 999      }, // bulb — last, never auto-selected
+  { label: "500", val: 1 / 500 },
+  { label: "250", val: 1 / 250 },
+  { label: "125", val: 1 / 125 },
+  { label: "60", val: 1 / 60 },
+  { label: "30", val: 1 / 30 },
+  { label: "15", val: 1 / 15 },
+  { label: "8", val: 1 / 8 },
+  { label: "4", val: 1 / 4 },
+  { label: "2", val: 1 / 2 },
+  { label: "1s", val: 1 },
+  { label: "2s", val: 2 },
+  { label: "4s", val: 4 },
+  { label: "8s", val: 8 },
+  { label: "15s", val: 15 },
+  { label: "30s", val: 30 },
+  { label: "60s", val: 60 },
+  { label: "B", val: 999 }, // bulb — last, never auto-selected
 ];
 
 export const APERTURES = [
@@ -33,15 +33,23 @@ export const APERTURES = [
   { label: "4.0", val: 4.0 },
   { label: "5.6", val: 5.6 },
   { label: "8.0", val: 8.0 },
-  { label: "11",  val: 11  },
-  { label: "16",  val: 16  },
+  { label: "11", val: 11 },
+  { label: "16", val: 16 },
+  { label: "22", val: 22 },
+  { label: "32", val: 32 },
 ];
 
 export const ISO_VALUES = [
-  { label: "100",  val: 100  },
-  { label: "200",  val: 200  },
-  { label: "400",  val: 400  },
-  { label: "800",  val: 800  },
+  { label: "50", val: 50 },
+  { label: "100", val: 100 },
+  { label: "125", val: 125 },
+  { label: "160", val: 160 },
+  { label: "200", val: 200 },
+  { label: "250", val: 250 },
+  { label: "320", val: 320 },
+  { label: "400", val: 400 },
+  { label: "500", val: 500 },
+  { label: "800", val: 800 },
   { label: "1600", val: 1600 },
   { label: "3200", val: 3200 },
 ];
@@ -72,70 +80,66 @@ function closestLogIndex(
 }
 
 export function useLightMeter() {
-  const [mode,          setMode]          = useState<ExposureMode>("A");
-  const [isoIndex,      setIsoIndexState] = useState(0);
+  const [mode, setMode] = useState<ExposureMode>("A");
+  const [isoIndex, setIsoIndexState] = useState(1); // ISO 100 default
   const [apertureIndex, setApertureIndex] = useState(3); // f/4.0
-  const [ssIndex,       setSsIndex]       = useState(5); // 1/125
+  const [ssIndex, setSsIndex] = useState(5); // 1/125
 
   const [selectedCamera, setSelectedCamera] = useState<CameraModel | null>(null);
-  const [measuredEV,     setMeasuredEV]     = useState(12); // EV 12 = sunny-day default until camera kicks in
-  const [evComp,         setEvComp]         = useState(0);
-  const [spotPoint,      setSpotPointState] = useState<SpotPoint | null>(null);
-  const [isActive,       setIsActive]       = useState(false);
-  const [error,          setError]          = useState("");
+  const [measuredEV, setMeasuredEV] = useState(12); // EV 12 = sunny-day default until camera kicks in
+  const [spotPoint, setSpotPointState] = useState<SpotPoint | null>(null);
+  const [isActive, setIsActive] = useState(false);
+  const [error, setError] = useState("");
   // When the primary auto-dial hits its limit this becomes "APT" or "SS"
-  const [autoOverride, setAutoOverride]     = useState<"APT" | "SS" | null>(null);
-  const [incidentMode, setIncidentMode]     = useState(false);
+  const [autoOverride, setAutoOverride] = useState<"APT" | "SS" | null>(null);
+  const [incidentMode, setIncidentMode] = useState(false);
   const incidentModeRef = useRef(false);
 
   // ── Mutable refs — always current, readable inside stable callbacks ──────
-  const modeRef      = useRef<ExposureMode>("A");
+  const modeRef = useRef<ExposureMode>("A");
   const measuredEVRef = useRef(0);
-  const evCompRef    = useRef(0);
-  const userAptRef   = useRef(3);
-  const userSsRef    = useRef(5);
-  const userIsoRef   = useRef(0);
-  const camSsMinRef  = useRef(0);
-  const camSsMaxRef  = useRef(SS_AUTO_MAX);
+  const userAptRef = useRef(3);
+  const userSsRef = useRef(5);
+  const userIsoRef = useRef(1); // ISO 100 default index
+  const camSsMinRef = useRef(0);
+  const camSsMaxRef = useRef(SS_AUTO_MAX);
   const camAptMinRef = useRef(0);
   const camAptMaxRef = useRef(APERTURES.length - 1);
 
   // Keep refs in sync with state/props
-  modeRef.current       = mode;
+  modeRef.current = mode;
   measuredEVRef.current = measuredEV;
-  evCompRef.current     = evComp;
 
-  const camSsMin  = selectedCamera?.ssMinIndex        ?? 0;
-  const camSsMax  = selectedCamera?.ssMaxIndex        ?? SS_AUTO_MAX;
-  const camAptMin = selectedCamera?.apertureMinIndex  ?? 0;
-  const camAptMax = selectedCamera?.apertureMaxIndex  ?? APERTURES.length - 1;
-  camSsMinRef.current  = camSsMin;
-  camSsMaxRef.current  = camSsMax;
+  const camSsMin = selectedCamera?.ssMinIndex ?? 0;
+  const camSsMax = selectedCamera?.ssMaxIndex ?? SS_AUTO_MAX;
+  const camAptMin = selectedCamera?.apertureMinIndex ?? 0;
+  const camAptMax = selectedCamera?.apertureMaxIndex ?? APERTURES.length - 1;
+  camSsMinRef.current = camSsMin;
+  camSsMaxRef.current = camSsMax;
   camAptMinRef.current = camAptMin;
   camAptMaxRef.current = camAptMax;
 
-  const videoRef  = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef   = useRef<number>();
+  const animRef = useRef<number>();
   const streamRef = useRef<MediaStream>();
 
   // ── Core recalculation — reads only refs, always fresh ─────────────────
   // Spillover rule: if the primary AUTO dial hits its min/max limit, the
   // secondary dial starts moving to compensate the residual exposure delta.
   const recalc = useCallback(() => {
-    const ev    = measuredEVRef.current || 12;
-    const total = ev + evCompRef.current;
-    const iso   = ISO_VALUES[userIsoRef.current].val;
+    const ev = measuredEVRef.current || 12;
+    const iso = ISO_VALUES[userIsoRef.current].val;
 
-    const ssMinIdx  = camSsMinRef.current;
-    const ssMaxIdx  = Math.min(camSsMaxRef.current, SS_AUTO_MAX);
+    const ssMinIdx = camSsMinRef.current;
+    const ssMaxIdx = Math.min(camSsMaxRef.current, SS_AUTO_MAX);
     const aptMinIdx = camAptMinRef.current;
     const aptMaxIdx = camAptMaxRef.current;
 
     if (modeRef.current === "A") {
       // ── Aperture Priority: SS is primary auto ────────────────────────
-      const f       = APERTURES[userAptRef.current].val;
-      const t_ideal = (f * f) / (Math.pow(2, total) * (iso / 100));
+      const f = APERTURES[userAptRef.current].val;
+      const t_ideal = (f * f) / (Math.pow(2, ev) * (iso / 100));
 
       const ssIdx = closestLogIndex(SHUTTER_SPEEDS, t_ideal, ssMinIdx, ssMaxIdx);
       setSsIndex(ssIdx);
@@ -147,7 +151,7 @@ export function useLightMeter() {
       if (!withinSsRange) {
         // SS hit a limit — spill over: move aperture to compensate residual
         const t_actual = SHUTTER_SPEEDS[ssIdx].val;
-        const f_new    = Math.sqrt(t_actual * Math.pow(2, total) * (iso / 100));
+        const f_new = Math.sqrt(t_actual * Math.pow(2, ev) * (iso / 100));
         setApertureIndex(closestLogIndex(APERTURES, f_new, aptMinIdx, aptMaxIdx));
         setAutoOverride("APT");
       } else {
@@ -157,8 +161,8 @@ export function useLightMeter() {
       }
     } else {
       // ── Shutter Priority: Aperture is primary auto ───────────────────
-      const t       = SHUTTER_SPEEDS[userSsRef.current].val;
-      const f_ideal = Math.sqrt(t * Math.pow(2, total) * (iso / 100));
+      const t = SHUTTER_SPEEDS[userSsRef.current].val;
+      const f_ideal = Math.sqrt(t * Math.pow(2, ev) * (iso / 100));
 
       const aptIdx = closestLogIndex(APERTURES, f_ideal, aptMinIdx, aptMaxIdx);
       setApertureIndex(aptIdx);
@@ -170,7 +174,7 @@ export function useLightMeter() {
       if (!withinAptRange) {
         // Aperture hit a limit — spill over: move SS to compensate residual
         const f_actual = APERTURES[aptIdx].val;
-        const t_new    = (f_actual * f_actual) / (Math.pow(2, total) * (iso / 100));
+        const t_new = (f_actual * f_actual) / (Math.pow(2, ev) * (iso / 100));
         setSsIndex(closestLogIndex(SHUTTER_SPEEDS, t_new, ssMinIdx, ssMaxIdx));
         setAutoOverride("SS");
       } else {
@@ -219,13 +223,11 @@ export function useLightMeter() {
     };
   }, [startCamera]);
 
-  // ── Frame analysis + debounced recalc for camera updates ────────────────
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
-
+  // ── Frame analysis — measures brightness, updates measuredEV only ─────────
   useEffect(() => {
     if (!isActive) return;
     const canvas = canvasRef.current;
-    const video  = videoRef.current;
+    const video = videoRef.current;
     if (!canvas || !video) return;
     canvas.width = 80; canvas.height = 60;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -257,22 +259,19 @@ export function useLightMeter() {
       const newEV = Math.max(1, Math.log2(sum / count + 1) * 2);
       setMeasuredEV(newEV);
       measuredEVRef.current = newEV; // keep ref immediately in sync
-
-      // Debounce camera-driven recalc at 400ms
-      clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(recalc, 400);
     };
     animRef.current = requestAnimationFrame(analyze);
     return () => {
       if (animRef.current) cancelAnimationFrame(animRef.current);
-      clearTimeout(debounceRef.current);
     };
-  }, [isActive, spotPoint, recalc]);
+  }, [isActive, spotPoint]);
 
-  // ── evComp changes → recalc immediately ─────────────────────────────────
+  // ── 1-second periodic recalc — keeps auto dials in sync while panning ───
   useEffect(() => {
-    recalc();
-  }, [evComp, recalc]);
+    if (!isActive) return;
+    const id = setInterval(recalc, 1000);
+    return () => clearInterval(id);
+  }, [isActive, recalc]);
 
   // ── Dial handlers — update refs then recalc immediately ─────────────────
   const handleSsChange = useCallback((idx: number) => {
@@ -309,19 +308,19 @@ export function useLightMeter() {
   const selectCamera = useCallback((cam: CameraModel | null) => {
     setSelectedCamera(cam);
     if (cam) {
-      const newSs  = Math.max(cam.ssMinIndex,       Math.min(cam.ssMaxIndex,       userSsRef.current));
+      const newSs = Math.max(cam.ssMinIndex, Math.min(cam.ssMaxIndex, userSsRef.current));
       const newApt = Math.max(cam.apertureMinIndex, Math.min(cam.apertureMaxIndex, userAptRef.current));
-      userSsRef.current  = newSs;
+      userSsRef.current = newSs;
       userAptRef.current = newApt;
       setSsIndex(newSs);
       setApertureIndex(newApt);
-      camSsMinRef.current  = cam.ssMinIndex;
-      camSsMaxRef.current  = cam.ssMaxIndex;
+      camSsMinRef.current = cam.ssMinIndex;
+      camSsMaxRef.current = cam.ssMaxIndex;
       camAptMinRef.current = cam.apertureMinIndex;
       camAptMaxRef.current = cam.apertureMaxIndex;
     } else {
-      camSsMinRef.current  = 0;
-      camSsMaxRef.current  = SS_AUTO_MAX;
+      camSsMinRef.current = 0;
+      camSsMaxRef.current = SS_AUTO_MAX;
       camAptMinRef.current = 0;
       camAptMaxRef.current = APERTURES.length - 1;
     }
@@ -332,12 +331,11 @@ export function useLightMeter() {
     mode,
     autoOverride,
     incidentMode, toggleIncidentMode,
-    isoIndex,      setIsoIndex,
+    isoIndex, setIsoIndex,
     apertureIndex, handleApertureChange,
-    ssIndex,       handleSsChange,
+    ssIndex, handleSsChange,
     measuredEV,
-    evComp,        setEvComp,
-    spotPoint,     setSpotPoint,
+    spotPoint, setSpotPoint,
     isActive, error, startCamera,
     selectedCamera, selectCamera,
     camSsMin, camSsMax, camAptMin, camAptMax,
