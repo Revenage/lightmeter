@@ -162,7 +162,7 @@ export default function Home() {
               <>
                 <p className="text-[11px] font-mono text-red-400 uppercase tracking-widest px-6 text-center">{error}</p>
                 <button
-                  onClick={startCamera}
+                  onClick={() => startCamera()}
                   className="px-6 py-2 text-[11px] font-mono uppercase tracking-widest"
                   style={{ border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.6)", background: "transparent" }}
                   data-testid="btn-retry-camera"

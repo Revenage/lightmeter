@@ -104,8 +104,11 @@ export function DialWheel({
     if (!isDragging.current) return;
     const dx = e.clientX - startX.current;
     const totalTx = -(startIndex.current * ITEM_WIDTH) + dx;
-    applyTransform(totalTx, false);
-    applyTickScroll(totalTx, false);
+    const minTx = -(hi * ITEM_WIDTH);
+    const maxTx = -(minIndex * ITEM_WIDTH);
+    const clampedTx = Math.max(minTx, Math.min(maxTx, totalTx));
+    applyTransform(clampedTx, false);
+    applyTickScroll(clampedTx, false);
     const raw = startIndex.current + Math.round(-dx / ITEM_WIDTH);
     const clamped = Math.max(minIndex, Math.min(hi, raw));
     if (clamped !== lastReported.current) {

@@ -80,27 +80,59 @@ function closestLogIndex(
 }
 
 export function useLightMeter() {
-  const [mode, setMode] = useState<ExposureMode>("A");
-  const [isoIndex, setIsoIndexState] = useState(1); // ISO 100 default
-  const [apertureIndex, setApertureIndex] = useState(3); // f/4.0
-  const [ssIndex, setSsIndex] = useState(5); // 1/125
+  // Helper to load settings from localStorage safely
+  const getStored = <T>(key: string, fallback: T): T => {
+    try {
+      const val = localStorage.getItem(key);
+      if (val !== null) return JSON.parse(val);
+    } catch (e) {
+      console.error("Failed to parse stored setting for " + key, e);
+    }
+    return fallback;
+  };
 
-  const [selectedCamera, setSelectedCamera] = useState<CameraModel | null>(null);
+  const [mode, setMode] = useState<ExposureMode>(() => getStored("lightmeter_mode", "A"));
+  const [isoIndex, setIsoIndexState] = useState<number>(() => getStored("lightmeter_isoIndex", 1)); // ISO 100 default
+  const [apertureIndex, setApertureIndex] = useState<number>(() => getStored("lightmeter_apertureIndex", 3)); // f/4.0
+  const [ssIndex, setSsIndex] = useState<number>(() => getStored("lightmeter_ssIndex", 5)); // 1/125
+
+  const [selectedCamera, setSelectedCamera] = useState<CameraModel | null>(() => getStored("lightmeter_selectedCamera", null));
   const [measuredEV, setMeasuredEV] = useState(12); // EV 12 = sunny-day default until camera kicks in
   const [spotPoint, setSpotPointState] = useState<SpotPoint | null>(null);
   const [isActive, setIsActive] = useState(false);
   const [error, setError] = useState("");
   // When the primary auto-dial hits its limit this becomes "APT" or "SS"
   const [autoOverride, setAutoOverride] = useState<"APT" | "SS" | null>(null);
-  const [incidentMode, setIncidentMode] = useState(false);
-  const incidentModeRef = useRef(false);
+  const [incidentMode, setIncidentMode] = useState(() => getStored("lightmeter_incidentMode", false));
+  const incidentModeRef = useRef(incidentMode);
+
+  // Sync state changes to localStorage
+  useEffect(() => {
+    localStorage.setItem("lightmeter_mode", JSON.stringify(mode));
+  }, [mode]);
+  useEffect(() => {
+    localStorage.setItem("lightmeter_isoIndex", JSON.stringify(isoIndex));
+  }, [isoIndex]);
+  useEffect(() => {
+    localStorage.setItem("lightmeter_apertureIndex", JSON.stringify(apertureIndex));
+  }, [apertureIndex]);
+  useEffect(() => {
+    localStorage.setItem("lightmeter_ssIndex", JSON.stringify(ssIndex));
+  }, [ssIndex]);
+  useEffect(() => {
+    localStorage.setItem("lightmeter_selectedCamera", JSON.stringify(selectedCamera));
+  }, [selectedCamera]);
+  useEffect(() => {
+    localStorage.setItem("lightmeter_incidentMode", JSON.stringify(incidentMode));
+    incidentModeRef.current = incidentMode;
+  }, [incidentMode]);
 
   // ── Mutable refs — always current, readable inside stable callbacks ──────
-  const modeRef = useRef<ExposureMode>("A");
-  const measuredEVRef = useRef(0);
-  const userAptRef = useRef(3);
-  const userSsRef = useRef(5);
-  const userIsoRef = useRef(1); // ISO 100 default index
+  const modeRef = useRef<ExposureMode>(mode);
+  const measuredEVRef = useRef(measuredEV);
+  const userAptRef = useRef(apertureIndex);
+  const userSsRef = useRef(ssIndex);
+  const userIsoRef = useRef(isoIndex);
   const camSsMinRef = useRef(0);
   const camSsMaxRef = useRef(SS_AUTO_MAX);
   const camAptMinRef = useRef(0);
@@ -109,9 +141,12 @@ export function useLightMeter() {
   // Keep refs in sync with state/props
   modeRef.current = mode;
   measuredEVRef.current = measuredEV;
+  userAptRef.current = apertureIndex;
+  userSsRef.current = ssIndex;
+  userIsoRef.current = isoIndex;
 
   const camSsMin = selectedCamera?.ssMinIndex ?? 0;
-  const camSsMax = selectedCamera?.ssMaxIndex ?? SS_AUTO_MAX;
+  const camSsMax = selectedCamera?.ssMaxIndex ?? (SHUTTER_SPEEDS.length - 1);
   const camAptMin = selectedCamera?.apertureMinIndex ?? 0;
   const camAptMax = selectedCamera?.apertureMaxIndex ?? APERTURES.length - 1;
   camSsMinRef.current = camSsMin;
@@ -121,8 +156,8 @@ export function useLightMeter() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef<number>();
-  const streamRef = useRef<MediaStream>();
+  const animRef = useRef<number | undefined>(undefined);
+  const streamRef = useRef<MediaStream | undefined>(undefined);
 
   // ── Core recalculation — reads only refs, always fresh ─────────────────
   // Spillover rule: if the primary AUTO dial hits its min/max limit, the
@@ -215,11 +250,22 @@ export function useLightMeter() {
     startCamera(next ? "user" : "environment");
   }, [startCamera]);
 
+  // Start camera on mount, and handle visibilitychange to resume camera when app is foregrounded
   useEffect(() => {
-    startCamera();
+    startCamera(incidentModeRef.current ? "user" : "environment");
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        startCamera(incidentModeRef.current ? "user" : "environment");
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       streamRef.current?.getTracks().forEach(t => t.stop());
       if (animRef.current) cancelAnimationFrame(animRef.current);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [startCamera]);
 
@@ -256,7 +302,29 @@ export function useLightMeter() {
           sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2], count++;
       }
       if (!count) return;
-      const newEV = Math.max(1, Math.log2(sum / count + 1) * 2);
+
+      let newEV = 12;
+      const track = streamRef.current?.getVideoTracks()[0];
+      const settings = track?.getSettings() as any;
+
+      if (settings && settings.exposureTime) {
+        // W3C: exposureTime is in 100-microsecond units (1 unit = 0.0001s)
+        const tVal = settings.exposureTime / 10000;
+        const isoVal = settings.iso || 100;
+        const N = settings.aperture || 2.0; // default to f/2.0 if aperture is not available
+
+        // EV_100 = log2(N^2 / t) - log2(ISO / 100)
+        // Adjust for any deviation of pixel brightness from target middle gray (128)
+        const brightnessRatio = (sum / count) / 128;
+        const brightnessOffset = brightnessRatio > 0 ? Math.log2(brightnessRatio) : 0;
+
+        newEV = Math.log2((N * N) / tVal) - Math.log2(isoVal / 100) + brightnessOffset;
+        newEV = Math.max(1, Math.min(20, newEV));
+      } else {
+        // Fallback to pixel-based EV calculation if settings are not available
+        newEV = Math.max(1, Math.log2(sum / count + 1) * 2);
+      }
+
       setMeasuredEV(newEV);
       measuredEVRef.current = newEV; // keep ref immediately in sync
     };
@@ -320,7 +388,7 @@ export function useLightMeter() {
       camAptMaxRef.current = cam.apertureMaxIndex;
     } else {
       camSsMinRef.current = 0;
-      camSsMaxRef.current = SS_AUTO_MAX;
+      camSsMaxRef.current = SHUTTER_SPEEDS.length - 1;
       camAptMinRef.current = 0;
       camAptMaxRef.current = APERTURES.length - 1;
     }
